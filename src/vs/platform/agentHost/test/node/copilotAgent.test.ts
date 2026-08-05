@@ -407,17 +407,12 @@ interface IFakeAgentSession {
 
 class MockCopilotSession {
 	readonly sessionId = 'test-session-1';
-	readonly configuredAdditionalDirectories: string[][] = [];
 	readonly rpc = {
 		options: {
 			update: async () => ({ success: true }),
 		},
 		permissions: {
 			setAllowAll: async ({ mode }: { mode: PermissionAllowAllMode }) => ({ success: true, mode }),
-			configure: async (params: Parameters<CopilotSession['rpc']['permissions']['configure']>[0]) => {
-				this.configuredAdditionalDirectories.push([...(params.paths?.additionalDirectories ?? [])]);
-				return { success: true };
-			},
 		},
 	};
 	private readonly _handlers = new Set<SessionEventHandler>();
@@ -5488,7 +5483,8 @@ suite('CopilotAgent', () => {
 
 		test('coalesces root and structural divergence into one same-conversation resume before send', async () => {
 			const client = new TestCopilotClient([]);
-			const agent = createTestAgent(disposables, { copilotClient: client });
+			const { agent, configurationService } = createTestAgentContext(disposables, { copilotClient: client });
+			configurationService.updateRootConfig({ [AgentHostCopilotMultiRootEnabledConfigKey]: true });
 			const sessionId = 'config-refresh-session';
 			const session = AgentSession.uri('copilotcli', sessionId);
 			const primary = URI.file('/workspace/primary');
@@ -5535,7 +5531,8 @@ suite('CopilotAgent', () => {
 
 		test('does not refresh an identical root snapshot', async () => {
 			const client = new TestCopilotClient([]);
-			const agent = createTestAgent(disposables, { copilotClient: client });
+			const { agent, configurationService } = createTestAgentContext(disposables, { copilotClient: client });
+			configurationService.updateRootConfig({ [AgentHostCopilotMultiRootEnabledConfigKey]: true });
 			const sessionId = 'config-refresh-session';
 			const session = AgentSession.uri('copilotcli', sessionId);
 			const primary = URI.file('/workspace/primary');
@@ -5571,7 +5568,8 @@ suite('CopilotAgent', () => {
 
 		test('parks a root refresh across a steering-promoted active turn without disposing the live session', async () => {
 			const client = new TestCopilotClient([]);
-			const agent = createTestAgent(disposables, { copilotClient: client });
+			const { agent, configurationService } = createTestAgentContext(disposables, { copilotClient: client });
+			configurationService.updateRootConfig({ [AgentHostCopilotMultiRootEnabledConfigKey]: true });
 			const sessionId = 'config-refresh-session';
 			const session = AgentSession.uri('copilotcli', sessionId);
 			const primary = URI.file('/workspace/primary');
@@ -5634,7 +5632,8 @@ suite('CopilotAgent', () => {
 
 		test('leaves a failed root refresh retryable on the next send', async () => {
 			const client = new TestCopilotClient([]);
-			const agent = createTestAgent(disposables, { copilotClient: client });
+			const { agent, configurationService } = createTestAgentContext(disposables, { copilotClient: client });
+			configurationService.updateRootConfig({ [AgentHostCopilotMultiRootEnabledConfigKey]: true });
 			const sessionId = 'config-refresh-session';
 			const session = AgentSession.uri('copilotcli', sessionId);
 			const roots = [URI.file('/workspace/primary'), URI.file('/workspace/new')];
@@ -5699,11 +5698,14 @@ suite('CopilotAgent', () => {
 			const client = new TestCopilotClient([sdkSession(sessionId, workingDirectory)]);
 			const mockSession = new MockCopilotSession();
 			const resumeCalls: string[] = [];
-			client.resumeSession = async id => {
+			const resumeAdditionalDirectories: (string[] | undefined)[] = [];
+			client.resumeSession = async (id, options) => {
 				resumeCalls.push(id);
+				resumeAdditionalDirectories.push(options?.additionalDirectories);
 				return mockSession as unknown as CopilotSession;
 			};
-			const agent = createTestAgent(disposables, { copilotClient: client, useRealResumePath: true, sessionDataService });
+			const { agent, configurationService } = createTestAgentContext(disposables, { copilotClient: client, useRealResumePath: true, sessionDataService });
+			configurationService.updateRootConfig({ [AgentHostCopilotMultiRootEnabledConfigKey]: true });
 			try {
 				await agent.authenticate(GITHUB_COPILOT_PROTECTED_RESOURCE.resource, 'token');
 				await agent.chats.sendMessage(defaultChatUri(session), 'hello', [primary]);
@@ -5717,11 +5719,11 @@ suite('CopilotAgent', () => {
 
 				assert.deepStrictEqual({
 					resumeCalls,
-					permissionSnapshots: mockSession.configuredAdditionalDirectories,
+					resumeAdditionalDirectories,
 					persistedWorkingDirectories: persistedWorkingDirectories ? JSON.parse(persistedWorkingDirectories) : undefined,
 				}, {
 					resumeCalls: [sessionId],
-					permissionSnapshots: [[]],
+					resumeAdditionalDirectories: [[]],
 					persistedWorkingDirectories: [primary.toString()],
 				});
 			} finally {
